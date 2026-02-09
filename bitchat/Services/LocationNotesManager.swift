@@ -14,6 +14,8 @@ struct LocationNotesDependencies {
     var sendEvent: SendEvent
     var deriveIdentity: (_ geohash: String) throws -> NostrIdentity
     var now: () -> Date
+    
+    private static let idBridge = NostrIdentityBridge()
 
     static let live = LocationNotesDependencies(
         relayLookup: { geohash, count in
@@ -35,7 +37,7 @@ struct LocationNotesDependencies {
             NostrRelayManager.shared.sendEvent(event, to: relays)
         },
         deriveIdentity: { geohash in
-            try NostrIdentityBridge.deriveIdentity(forGeohash: geohash)
+            try idBridge.deriveIdentity(forGeohash: geohash)
         },
         now: { Date() }
     )
@@ -74,38 +76,52 @@ final class LocationNotesManager: ObservableObject {
     @Published private(set) var state: State = .loading
     @Published private(set) var errorMessage: String?
     private var subscriptionID: String?
+    private var noteIDs = Set<String>() // O(1) duplicate detection
     private let dependencies: LocationNotesDependencies
+    private let maxNotesInMemory = 500 // Defensive cap (relay limit is 200)
 
     private enum Strings {
-        static let noRelays = NSLocalizedString(
-            "location_notes.error.no_relays",
-            comment: "Shown when no geo relays are available near the selected location"
-        )
+        static let noRelays = String(localized: "location_notes.error.no_relays", comment: "Shown when no geo relays are available near the selected location")
 
         static func failedToSend(_ detail: String) -> String {
-            let format = NSLocalizedString(
-                "location_notes.error.failed_to_send",
-                comment: "Shown when a location note fails to send"
+            String(
+                format: String(localized: "location_notes.error.failed_to_send", comment: "Shown when a location note fails to send"),
+                locale: .current,
+                detail
             )
-            return String(format: format, detail)
         }
     }
 
     init(geohash: String, dependencies: LocationNotesDependencies = .live) {
-        self.geohash = geohash.lowercased()
+        let norm = geohash.lowercased()
+        self.geohash = norm
         self.dependencies = dependencies
+        // Validate geohash (building-level precision: 8 chars)
+        if !Geohash.isValidBuildingGeohash(norm) {
+            SecureLogger.warning("LocationNotesManager: invalid geohash '\(norm)' (expected 8 valid base32 chars)", category: .session)
+        }
         subscribe()
     }
 
     func setGeohash(_ newGeohash: String) {
         let norm = newGeohash.lowercased()
         guard norm != geohash else { return }
+        // Validate geohash (building-level precision: 8 chars)
+        guard Geohash.isValidBuildingGeohash(norm) else {
+            SecureLogger.warning("LocationNotesManager: rejecting invalid geohash '\(norm)' (expected 8 valid base32 chars)", category: .session)
+            return
+        }
         if let sub = subscriptionID {
             dependencies.unsubscribe(sub)
             subscriptionID = nil
         }
+        // Set loading state before clearing to prevent empty state flicker
+        state = .loading
+        initialLoadComplete = false
+        errorMessage = nil
         geohash = norm
         notes.removeAll()
+        noteIDs.removeAll()
         subscribe()
     }
 
@@ -114,7 +130,12 @@ final class LocationNotesManager: ObservableObject {
             dependencies.unsubscribe(sub)
             subscriptionID = nil
         }
+        // Set loading state before clearing to prevent empty state flicker
+        state = .loading
+        initialLoadComplete = false
+        errorMessage = nil
         notes.removeAll()
+        noteIDs.removeAll()
         subscribe()
     }
 
@@ -142,20 +163,30 @@ final class LocationNotesManager: ObservableObject {
 
         subscriptionID = subID
         initialLoadComplete = false
-        // For persistent notes, allow relays to return recent history without an aggressive time cutoff
-        let filter = NostrFilter.geohashNotes(geohash, since: nil, limit: 200)
+
+        // Subscribe to center + 8 neighbors (± 1 grid)
+        let neighbors = Geohash.neighbors(of: geohash)
+        let allGeohashes = [geohash] + neighbors
+        let filter = NostrFilter.geohashNotes(allGeohashes, since: nil, limit: 200)
+
+        // Build a set of valid geohashes for tag matching (includes all 9 cells)
+        let validGeohashes = Set(allGeohashes.map { $0.lowercased() })
 
         dependencies.subscribe(filter, subID, relays, { [weak self] event in
             guard let self = self else { return }
             guard event.kind == NostrProtocol.EventKind.textNote.rawValue else { return }
-            // Ensure matching tag
-            guard event.tags.contains(where: { $0.count >= 2 && $0[0].lowercased() == "g" && $0[1].lowercased() == self.geohash }) else { return }
-            if self.notes.contains(where: { $0.id == event.id }) { return }
+            // Ensure matching tag - accept any of our 9 geohashes
+            guard event.tags.contains(where: { tag in
+                tag.count >= 2 && tag[0].lowercased() == "g" && validGeohashes.contains(tag[1].lowercased())
+            }) else { return }
+            guard !self.noteIDs.contains(event.id) else { return }
+            self.noteIDs.insert(event.id)
             let nick = event.tags.first(where: { $0.first?.lowercased() == "n" && $0.count >= 2 })?.dropFirst().first
             let ts = Date(timeIntervalSince1970: TimeInterval(event.created_at))
             let note = Note(id: event.id, pubkey: event.pubkey, content: event.content, createdAt: ts, nickname: nick)
             self.notes.append(note)
             self.notes.sort { $0.createdAt > $1.createdAt }
+            self.enforceMemoryCap()
             self.state = .ready
         }, { [weak self] in
             guard let self = self else { return }
@@ -191,15 +222,26 @@ final class LocationNotesManager: ObservableObject {
                 id: event.id,
                 pubkey: id.publicKeyHex,
                 content: trimmed,
-                createdAt: dependencies.now(),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(event.created_at)),
                 nickname: nickname
             )
+            self.noteIDs.insert(event.id)
             self.notes.insert(echo, at: 0)
+            self.enforceMemoryCap()
             self.state = .ready
             self.errorMessage = nil
         } catch {
             SecureLogger.error("LocationNotesManager: failed to send note: \(error)", category: .session)
             errorMessage = Strings.failedToSend(error.localizedDescription)
+        }
+    }
+
+    /// Enforces defensive memory cap on notes array (keeps newest).
+    private func enforceMemoryCap() {
+        if notes.count > maxNotesInMemory {
+            let removed = notes.count - maxNotesInMemory
+            notes = Array(notes.prefix(maxNotesInMemory))
+            SecureLogger.debug("LocationNotesManager: trimmed \(removed) old notes (cap: \(maxNotesInMemory))", category: .session)
         }
     }
 

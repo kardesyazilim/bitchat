@@ -4,26 +4,34 @@ struct MeshPeerList: View {
     @ObservedObject var viewModel: ChatViewModel
     let textColor: Color
     let secondaryTextColor: Color
-    let onTapPeer: (String) -> Void
-    let onToggleFavorite: (String) -> Void
-    let onShowFingerprint: (String) -> Void
+    let onTapPeer: (PeerID) -> Void
+    let onToggleFavorite: (PeerID) -> Void
+    let onShowFingerprint: (PeerID) -> Void
     @Environment(\.colorScheme) var colorScheme
 
     @State private var orderedIDs: [String] = []
 
     private enum Strings {
         static let noneNearby: LocalizedStringKey = "geohash_people.none_nearby"
-        static let blockedTooltip = L10n.string(
-            "geohash_people.tooltip.blocked",
-            comment: "Tooltip shown next to a blocked peer indicator"
-        )
-        static let newMessagesTooltip = L10n.string(
-            "mesh_peers.tooltip.new_messages",
-            comment: "Tooltip for the unread messages indicator"
-        )
+        static let blockedTooltip = String(localized: "geohash_people.tooltip.blocked", comment: "Tooltip shown next to a blocked peer indicator")
+        static let newMessagesTooltip = String(localized: "mesh_peers.tooltip.new_messages", comment: "Tooltip for the unread messages indicator")
     }
 
     var body: some View {
+        let myPeerID = viewModel.meshService.myPeerID
+        let mapped: [(peer: BitchatPeer, isMe: Bool, hasUnread: Bool, enc: EncryptionStatus)] = viewModel.allPeers.map { peer in
+            let isMe = peer.peerID == myPeerID
+            let hasUnread = viewModel.hasUnreadMessages(for: peer.peerID)
+            let enc = viewModel.getEncryptionStatus(for: peer.peerID)
+            return (peer, isMe, hasUnread, enc)
+        }
+        // Stable visual order without mutating state here
+        let currentIDs = mapped.map { $0.peer.peerID.id }
+        let displayIDs = orderedIDs.filter { currentIDs.contains($0) } + currentIDs.filter { !orderedIDs.contains($0) }
+        let peers: [(peer: BitchatPeer, isMe: Bool, hasUnread: Bool, enc: EncryptionStatus)] = displayIDs.compactMap { id in
+            mapped.first(where: { $0.peer.peerID.id == id })
+        }
+        
         if viewModel.allPeers.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 Text(Strings.noneNearby)
@@ -33,27 +41,13 @@ struct MeshPeerList: View {
                     .padding(.top, 12)
             }
         } else {
-            let myPeerID = viewModel.meshService.myPeerID
-            let mapped: [(peer: BitchatPeer, isMe: Bool, hasUnread: Bool, enc: EncryptionStatus)] = viewModel.allPeers.map { peer in
-                let isMe = peer.id == myPeerID
-                let hasUnread = viewModel.hasUnreadMessages(for: peer.id)
-                let enc = viewModel.getEncryptionStatus(for: peer.id)
-                return (peer, isMe, hasUnread, enc)
-            }
-            // Stable visual order without mutating state here
-            let currentIDs = mapped.map { $0.peer.id }
-            let displayIDs = orderedIDs.filter { currentIDs.contains($0) } + currentIDs.filter { !orderedIDs.contains($0) }
-            let peers: [(peer: BitchatPeer, isMe: Bool, hasUnread: Bool, enc: EncryptionStatus)] = displayIDs.compactMap { id in
-                mapped.first(where: { $0.peer.id == id })
-            }
-
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(0..<peers.count, id: \.self) { idx in
                     let item = peers[idx]
                     let peer = item.peer
                     let isMe = item.isMe
                     HStack(spacing: 4) {
-                        let assigned = viewModel.colorForMeshPeer(id: peer.id, isDark: colorScheme == .dark)
+                        let assigned = viewModel.colorForMeshPeer(id: peer.peerID, isDark: colorScheme == .dark)
                         let baseColor = isMe ? Color.orange : assigned
                         if isMe {
                             Image(systemName: "person.fill")
@@ -82,7 +76,7 @@ struct MeshPeerList: View {
                         }
 
                         let displayName = isMe ? viewModel.nickname : peer.nickname
-                        let (base, suffix) = splitSuffix(from: displayName)
+                        let (base, suffix) = displayName.splitSuffix()
                         HStack(spacing: 0) {
                             Text(base)
                                 .font(.bitchatSystem(size: 14, design: .monospaced))
@@ -95,7 +89,7 @@ struct MeshPeerList: View {
                             }
                         }
 
-                        if !isMe, viewModel.isPeerBlocked(peer.id) {
+                        if !isMe, viewModel.isPeerBlocked(peer.peerID) {
                             Image(systemName: "nosign")
                                 .font(.bitchatSystem(size: 10))
                                 .foregroundColor(.red)
@@ -111,7 +105,7 @@ struct MeshPeerList: View {
                                 }
                             } else {
                                 // Offline: prefer showing verified badge from persisted fingerprints
-                                if let fp = viewModel.getFingerprint(for: peer.id),
+                                if let fp = viewModel.getFingerprint(for: peer.peerID),
                                    viewModel.verifiedFingerprints.contains(fp) {
                                     Image(systemName: "checkmark.seal.fill")
                                         .font(.bitchatSystem(size: 10))
@@ -136,7 +130,7 @@ struct MeshPeerList: View {
                         }
 
                         if !isMe {
-                            Button(action: { onToggleFavorite(peer.id) }) {
+                            Button(action: { onToggleFavorite(peer.peerID) }) {
                                 Image(systemName: (peer.favoriteStatus?.isFavorite ?? false) ? "star.fill" : "star")
                                     .font(.bitchatSystem(size: 12))
                                     .foregroundColor((peer.favoriteStatus?.isFavorite ?? false) ? .yellow : secondaryTextColor)
@@ -148,16 +142,16 @@ struct MeshPeerList: View {
                     .padding(.vertical, 4)
                     .padding(.top, idx == 0 ? 10 : 0)
                     .contentShape(Rectangle())
-                    .onTapGesture { if !isMe { onTapPeer(peer.id) } }
-                    .onTapGesture(count: 2) { if !isMe { onShowFingerprint(peer.id) } }
+                    .onTapGesture { if !isMe { onTapPeer(peer.peerID) } }
+                    .onTapGesture(count: 2) { if !isMe { onShowFingerprint(peer.peerID) } }
                 }
             }
             // Seed and update order outside result builder
             .onAppear {
-                let currentIDs = mapped.map { $0.peer.id }
+                let currentIDs = mapped.map { $0.peer.peerID.id }
                 orderedIDs = currentIDs
             }
-            .onChange(of: mapped.map { $0.peer.id }) { ids in
+            .onChange(of: mapped.map { $0.peer.peerID.id }) { ids in
                 var newOrder = orderedIDs
                 newOrder.removeAll { !ids.contains($0) }
                 for id in ids where !newOrder.contains(id) { newOrder.append(id) }
@@ -165,17 +159,4 @@ struct MeshPeerList: View {
             }
         }
     }
-}
-
-// Helper to split a trailing #abcd suffix
-private func splitSuffix(from name: String) -> (String, String) {
-    guard name.count >= 5 else { return (name, "") }
-    let suffix = String(name.suffix(5))
-    if suffix.first == "#", suffix.dropFirst().allSatisfy({ c in
-        ("0"..."9").contains(String(c)) || ("a"..."f").contains(String(c)) || ("A"..."F").contains(String(c))
-    }) {
-        let base = String(name.dropLast(5))
-        return (base, suffix)
-    }
-    return (name, "")
 }

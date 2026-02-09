@@ -18,6 +18,7 @@ struct NostrProtocol {
         case seal = 13 // NIP-17 sealed event
         case giftWrap = 1059 // NIP-59 gift wrap
         case ephemeralEvent = 20000
+        case geohashPresence = 20001
     }
     
     /// Create a NIP-17 private message
@@ -120,6 +121,24 @@ struct NostrProtocol {
             kind: .ephemeralEvent,
             tags: tags,
             content: content
+        )
+        let schnorrKey = try senderIdentity.schnorrSigningKey()
+        return try event.sign(with: schnorrKey)
+    }
+
+    /// Create a geohash presence heartbeat (kind 20001)
+    /// Must contain empty content and NO nickname tag
+    static func createGeohashPresenceEvent(
+        geohash: String,
+        senderIdentity: NostrIdentity
+    ) throws -> NostrEvent {
+        let tags = [["g", geohash]]
+        let event = NostrEvent(
+            pubkey: senderIdentity.publicKeyHex,
+            createdAt: Date(),
+            kind: .geohashPresence,
+            tags: tags,
+            content: ""
         )
         let schnorrKey = try senderIdentity.schnorrSigningKey()
         return try event.sign(with: schnorrKey)
@@ -509,6 +528,26 @@ struct NostrEvent: Codable {
         signed.sig = signatureHex
         return signed
     }
+
+    /// Validate that the event ID and Schnorr signature match the content and pubkey.
+    /// Returns false when the signature is missing, malformed, or does not verify.
+    func isValidSignature() -> Bool {
+        guard let sig = sig,
+              let sigData = Data(hexString: sig),
+              let pubData = Data(hexString: pubkey),
+              sigData.count == 64,
+              pubData.count == 32,
+              let signature = try? P256K.Schnorr.SchnorrSignature(dataRepresentation: sigData),
+              let (expectedId, eventHash) = try? calculateEventId(),
+              expectedId == id
+        else {
+            return false
+        }
+
+        var messageBytes = [UInt8](eventHash)
+        let xonly = P256K.Schnorr.XonlyKey(dataRepresentation: pubData)
+        return xonly.isValid(signature, for: &messageBytes)
+    }
     
     private func calculateEventId() throws -> (String, Data) {
         let serialized = [
@@ -521,10 +560,7 @@ struct NostrEvent: Codable {
         ] as [Any]
         
         let data = try JSONSerialization.data(withJSONObject: serialized, options: [.withoutEscapingSlashes])
-        let hash = CryptoKit.SHA256.hash(data: data)
-        let hashData = Data(hash)
-        let hashHex = hash.compactMap { String(format: "%02x", $0) }.joined()
-        return (hashHex, hashData)
+        return (data.sha256Fingerprint(), data.sha256Hash())
     }
     
     func jsonString() throws -> String {

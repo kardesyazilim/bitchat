@@ -15,10 +15,7 @@ struct MyQRView: View {
 
     private enum Strings {
         static let title: LocalizedStringKey = "verification.my_qr.title"
-        static let accessibilityLabel = L10n.string(
-            "verification.my_qr.accessibility_label",
-            comment: "Accessibility label describing the verification QR code"
-        )
+        static let accessibilityLabel = String(localized: "verification.my_qr.accessibility_label", comment: "Accessibility label describing the verification QR code")
     }
 
     var body: some View {
@@ -112,6 +109,7 @@ struct ImageWrapper: View {
 struct QRScanView: View {
     @EnvironmentObject var viewModel: ChatViewModel
     var isActive: Bool = true
+    var onSuccess: (() -> Void)? = nil  // Called when verification succeeds
     @State private var input = ""
     @State private var result: String = "" // not shown for iOS scanner
     @State private var lastValid: String = ""
@@ -120,30 +118,32 @@ struct QRScanView: View {
         static let pastePrompt: LocalizedStringKey = "verification.scan.paste_prompt"
         static let validate: LocalizedStringKey = "verification.scan.validate"
         static func requested(_ nickname: String) -> String {
-            L10n.format(
-                "verification.scan.status.requested",
-                comment: "Status text when verification is requested for a nickname",
+            String(
+                format: String(localized: "verification.scan.status.requested", comment: "Status text when verification is requested for a nickname"),
+                locale: .current,
                 nickname
             )
         }
-        static let notFound = L10n.string(
-            "verification.scan.status.no_peer",
-            comment: "Status when no matching peer is found for a verification request"
-        )
-        static let invalid = L10n.string(
-            "verification.scan.status.invalid",
-            comment: "Status when a scanned QR payload is invalid"
-        )
+        static let notFound = String(localized: "verification.scan.status.no_peer", comment: "Status when no matching peer is found for a verification request")
+        static let invalid = String(localized: "verification.scan.status.invalid", comment: "Status when a scanned QR payload is invalid")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             #if os(iOS)
             CameraScannerView(isActive: isActive) { code in
+                // Deduplicate: ignore if we just processed this exact QR code
+                guard code != lastValid else { return }
+
                 if let qr = VerificationService.shared.verifyScannedQR(code) {
                     let ok = viewModel.beginQRVerification(with: qr)
-                    if !ok { /* already pending; continue scanning */ }
-                    lastValid = code
+                    if ok {
+                        // Successfully initiated verification; remember this QR to prevent re-scanning
+                        lastValid = code
+                        // Close scanner and return to "My QR" view
+                        onSuccess?()
+                    }
+                    // If !ok, peer not found or already pending - don't set lastValid so user can retry
                 } else {
                     // ignore invalid reads; continue scanning
                 }
@@ -157,9 +157,22 @@ struct QRScanView: View {
                 .frame(height: 100)
                 .border(Color.gray.opacity(0.4))
             Button(Strings.validate) {
+                // Deduplicate: ignore if we just processed this exact QR
+                guard input != lastValid else {
+                    result = Strings.requested("")  // Already processed
+                    return
+                }
+
                 if let qr = VerificationService.shared.verifyScannedQR(input) {
                     let ok = viewModel.beginQRVerification(with: qr)
-                    result = ok ? Strings.requested(qr.nickname) : Strings.notFound
+                    if ok {
+                        result = Strings.requested(qr.nickname)
+                        lastValid = input
+                        // Close scanner and return to "My QR" view
+                        onSuccess?()
+                    } else {
+                        result = Strings.notFound
+                    }
                 } else {
                     result = Strings.invalid
                 }
@@ -279,7 +292,7 @@ struct VerificationSheetView: View {
     private var boxColor: Color { Color.gray.opacity(0.1) }
 
     private func myQRString() -> String {
-        let npub = try? NostrIdentityBridge.getCurrentNostrIdentity()?.npub
+        let npub = try? viewModel.idBridge.getCurrentNostrIdentity()?.npub
         return VerificationService.shared.buildMyQRString(nickname: viewModel.nickname, npub: npub) ?? ""
     }
 
@@ -317,12 +330,16 @@ struct VerificationSheetView: View {
                             .multilineTextAlignment(.center)
                             .foregroundColor(accentColor)
                         #if os(iOS)
-                        QRScanView(isActive: showingScanner)
+                        QRScanView(isActive: showingScanner, onSuccess: {
+                            showingScanner = false
+                        })
                             .environmentObject(viewModel)
                             .frame(height: 280)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         #else
-                        QRScanView()
+                        QRScanView(onSuccess: {
+                            showingScanner = false
+                        })
                             .environmentObject(viewModel)
                         #endif
                     }
@@ -371,10 +388,6 @@ struct VerificationSheetView: View {
             .padding(.vertical, 14)
         }
         .background(backgroundColor)
-        #if os(iOS)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-        #endif
         .onDisappear { showingScanner = false }
     }
 }

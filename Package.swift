@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "bitchat",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v16),
         .macOS(.v13)
@@ -15,6 +16,7 @@ let package = Package(
         ),
     ],
     dependencies:[
+        .package(path: "localPackages/Arti"),
         .package(path: "localPackages/BitLogger"),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1")
     ],
@@ -24,8 +26,7 @@ let package = Package(
             dependencies: [
                 .product(name: "P256K", package: "swift-secp256k1"),
                 .product(name: "BitLogger", package: "BitLogger"),
-                .target(name: "TorC"),
-                .target(name: "tor-nolzma")
+                .product(name: "Tor", package: "Arti")
             ],
             path: "bitchat",
             exclude: [
@@ -34,19 +35,11 @@ let package = Package(
                 "bitchat.entitlements",
                 "bitchat-macOS.entitlements",
                 "LaunchScreen.storyboard",
-                "Services/Tor/C/"
+                "ViewModels/Extensions/README.md"
             ],
-            linkerSettings: [
-                .linkedLibrary("z")
+            resources: [
+                .process("Localizable.xcstrings")
             ]
-        ),
-        .target(
-            name: "TorC",
-            path: "bitchat/Services/Tor/C"
-        ),
-        .binaryTarget(
-            name: "tor-nolzma",
-            path: "Frameworks/tor-nolzma.xcframework"
         ),
         .testTarget(
             name: "bitchatTests",
@@ -55,6 +48,10 @@ let package = Package(
             exclude: [
                 "Info.plist",
                 "README.md"
+            ],
+            resources: [
+                .process("Localization"),
+                .process("Noise")
             ]
         )
     ]

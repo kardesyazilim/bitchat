@@ -59,6 +59,7 @@
 ///
 
 import Foundation
+import CoreBluetooth
 
 // MARK: - Message Types
 
@@ -78,6 +79,7 @@ enum MessageType: UInt8 {
     
     // Fragmentation (simplified)
     case fragment = 0x20        // Single fragment type for large messages
+    case fileTransfer = 0x22    // Binary file/audio/image payloads
     
     var description: String {
         switch self {
@@ -88,6 +90,7 @@ enum MessageType: UInt8 {
         case .noiseHandshake: return "noiseHandshake"
         case .noiseEncrypted: return "noiseEncrypted"
         case .fragment: return "fragment"
+        case .fileTransfer: return "fileTransfer"
         }
     }
 }
@@ -131,7 +134,7 @@ enum LazyHandshakeState {
 // MARK: - Delivery Status
 
 // Delivery status for messages
-enum DeliveryStatus: Codable, Equatable {
+enum DeliveryStatus: Codable, Equatable, Hashable {
     case sending
     case sent  // Left our device
     case delivered(to: String, at: Date)  // Confirmed by recipient
@@ -161,18 +164,21 @@ enum DeliveryStatus: Codable, Equatable {
 
 protocol BitchatDelegate: AnyObject {
     func didReceiveMessage(_ message: BitchatMessage)
-    func didConnectToPeer(_ peerID: String)
-    func didDisconnectFromPeer(_ peerID: String)
-    func didUpdatePeerList(_ peers: [String])
-    
+    func didConnectToPeer(_ peerID: PeerID)
+    func didDisconnectFromPeer(_ peerID: PeerID)
+    func didUpdatePeerList(_ peers: [PeerID])
+
     // Optional method to check if a fingerprint belongs to a favorite peer
     func isFavorite(fingerprint: String) -> Bool
-    
+
     func didUpdateMessageDeliveryStatus(_ messageID: String, status: DeliveryStatus)
 
     // Low-level events for better separation of concerns
-    func didReceiveNoisePayload(from peerID: String, type: NoisePayloadType, payload: Data, timestamp: Date)
-    func didReceivePublicMessage(from peerID: String, nickname: String, content: String, timestamp: Date)
+    func didReceiveNoisePayload(from peerID: PeerID, type: NoisePayloadType, payload: Data, timestamp: Date)
+
+    // Bluetooth state updates for user notifications
+    func didUpdateBluetoothState(_ state: CBManagerState)
+    func didReceivePublicMessage(from peerID: PeerID, nickname: String, content: String, timestamp: Date, messageID: String?)
 }
 
 // Provide default implementation to make it effectively optional
@@ -185,11 +191,11 @@ extension BitchatDelegate {
         // Default empty implementation
     }
 
-    func didReceiveNoisePayload(from peerID: String, type: NoisePayloadType, payload: Data, timestamp: Date) {
+    func didReceiveNoisePayload(from peerID: PeerID, type: NoisePayloadType, payload: Data, timestamp: Date) {
         // Default empty implementation
     }
 
-    func didReceivePublicMessage(from peerID: String, nickname: String, content: String, timestamp: Date) {
+    func didReceivePublicMessage(from peerID: PeerID, nickname: String, content: String, timestamp: Date, messageID: String?) {
         // Default empty implementation
     }
 }

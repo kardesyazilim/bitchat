@@ -11,10 +11,7 @@ struct GeohashPeopleList: View {
     private enum Strings {
         static let noneNearby: LocalizedStringKey = "geohash_people.none_nearby"
         static let youSuffix: LocalizedStringKey = "geohash_people.you_suffix"
-        static let blockedTooltip = L10n.string(
-            "geohash_people.tooltip.blocked",
-            comment: "Tooltip shown next to users blocked in geohash channels"
-        )
+        static let blockedTooltip = String(localized: "geohash_people.tooltip.blocked", comment: "Tooltip shown next to users blocked in geohash channels")
         static let unblock: LocalizedStringKey = "geohash_people.action.unblock"
         static let block: LocalizedStringKey = "geohash_people.action.block"
     }
@@ -31,7 +28,7 @@ struct GeohashPeopleList: View {
         } else {
             let myHex: String? = {
                 if case .location(let ch) = LocationChannelManager.shared.selectedChannel,
-                   let id = try? NostrIdentityBridge.deriveIdentity(forGeohash: ch.geohash) {
+                   let id = try? viewModel.idBridge.deriveIdentity(forGeohash: ch.geohash) {
                     return id.publicKeyHex.lowercased()
                 }
                 return nil
@@ -64,7 +61,7 @@ struct GeohashPeopleList: View {
                         let rowColor: Color = isMe ? .orange : assignedColor
                         Image(systemName: icon).font(.bitchatSystem(size: 12)).foregroundColor(rowColor)
 
-                        let (base, suffix) = splitSuffix(from: person.displayName)
+                        let (base, suffix) = person.displayName.splitSuffix()
                         HStack(spacing: 0) {
                             Text(base)
                                 .font(.bitchatSystem(size: 14, design: .monospaced))
@@ -128,17 +125,4 @@ struct GeohashPeopleList: View {
             }
         }
     }
-}
-
-// Helper to split a trailing #abcd suffix
-private func splitSuffix(from name: String) -> (String, String) {
-    guard name.count >= 5 else { return (name, "") }
-    let suffix = String(name.suffix(5))
-    if suffix.first == "#", suffix.dropFirst().allSatisfy({ c in
-        ("0"..."9").contains(String(c)) || ("a"..."f").contains(String(c)) || ("A"..."F").contains(String(c))
-    }) {
-        let base = String(name.dropLast(5))
-        return (base, suffix)
-    }
-    return (name, "")
 }

@@ -32,52 +32,65 @@ struct LocationChannelsSheet: View {
         static let toggleOn: LocalizedStringKey = "common.toggle.on"
         static let toggleOff: LocalizedStringKey = "common.toggle.off"
 
-        static let invalidGeohash = L10n.string(
-            "location_channels.error.invalid_geohash",
-            comment: "Error shown when a custom geohash is invalid"
-        )
+        static let invalidGeohash = String(localized: "location_channels.error.invalid_geohash", comment: "Error shown when a custom geohash is invalid")
 
         static func meshTitle(_ count: Int) -> String {
-            let label = L10n.string(
-                "location_channels.mesh_label",
-                comment: "Label for the mesh channel row"
-            )
+            let label = String(localized: "location_channels.mesh_label", comment: "Label for the mesh channel row")
             return rowTitle(label: label, count: count)
         }
 
         static func levelTitle(for level: GeohashChannelLevel, count: Int) -> String {
+            // High-precision uncertainty: if count is 0 for high-precision levels,
+            // show "?" because presence broadcasting is disabled for privacy.
+            let isHighPrecision = (level == .neighborhood || level == .block || level == .building)
+            if isHighPrecision && count == 0 {
+                return String(
+                    format: String(localized: "location_channels.row_title_unknown", defaultValue: "%@ [? people]"),
+                    locale: .current,
+                    level.displayName
+                )
+            }
             return rowTitle(label: level.displayName, count: count)
         }
 
         static func bookmarkTitle(geohash: String, count: Int) -> String {
+            // Check precision for bookmarks too
+            let len = geohash.count
+            // Neighborhood=6, Block=7, Building=8+
+            let isHighPrecision = (len >= 6)
+            if isHighPrecision && count == 0 {
+                return String(
+                    format: String(localized: "location_channels.row_title_unknown", defaultValue: "%@ [? people]"),
+                    locale: .current,
+                    "#\(geohash)"
+                )
+            }
             return rowTitle(label: "#\(geohash)", count: count)
         }
 
         static func subtitlePrefix(geohash: String, coverage: String) -> String {
-            L10n.format(
-                "location_channels.subtitle_prefix",
-                comment: "Subtitle prefix showing geohash and coverage",
-                geohash,
-                coverage
+            String(
+                format: String(localized: "location_channels.subtitle_prefix", comment: "Subtitle prefix showing geohash and coverage"),
+                locale: .current,
+                geohash, coverage
             )
         }
 
         static func subtitle(prefix: String, name: String?) -> String {
             guard let name, !name.isEmpty else { return prefix }
-            return L10n.format(
-                "location_channels.subtitle_with_name",
-                comment: "Subtitle combining prefix and resolved location name",
-                prefix,
-                name
+            return String(
+                format: String(localized: "location_channels.subtitle_with_name", comment: "Subtitle combining prefix and resolved location name"),
+                locale: .current,
+                prefix, name
             )
         }
 
         private static func rowTitle(label: String, count: Int) -> String {
-            let format = NSLocalizedString(
-                "location_channels.row_title",
-                comment: "List row title with participant count"
+            String(
+                format: String(localized: "location_channels.row_title", comment: "List row title with participant count"),
+                locale: .current,
+                label, count
             )
-            return NSString.localizedStringWithFormat(format as NSString, label, count) as String
         }
     }
 
@@ -133,9 +146,6 @@ struct LocationChannelsSheet: View {
             .navigationTitle("")
             #endif
         }
-        #if os(iOS)
-        .presentationDetents([.large])
-        #endif
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 520)
         #endif
@@ -271,7 +281,7 @@ struct LocationChannelsSheet: View {
     private var customTeleportSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 2) {
-                Text("#")
+                Text(verbatim: "#")
                     .font(.bitchatSystem(size: 14, design: .monospaced))
                     .foregroundColor(.secondary)
                 TextField("geohash", text: $customGeohash)
@@ -368,7 +378,7 @@ struct LocationChannelsSheet: View {
                         isPresented = false
                     }
                     .padding(.vertical, 6)
-                    .onAppear { bookmarks.resolveNameIfNeeded(for: gh) }
+                    .onAppear { bookmarks.resolveBookmarkNameIfNeeded(for: gh) }
 
                     if index < entries.count - 1 {
                         sectionDivider
@@ -427,7 +437,7 @@ struct LocationChannelsSheet: View {
                 }
                 Spacer()
                 if isSelected {
-                    Text("✔︎")
+                    Text(verbatim: "✔︎")
                         .font(.bitchatSystem(size: 16, design: .monospaced))
                         .foregroundColor(standardGreen)
                 }
@@ -451,7 +461,7 @@ struct LocationChannelsSheet: View {
         // Count mesh-connected OR mesh-reachable peers (exclude self)
         let myID = viewModel.meshService.myPeerID
         return viewModel.allPeers.reduce(0) { acc, peer in
-            if peer.id != myID && (peer.isConnected || peer.isReachable) { return acc + 1 }
+            if peer.peerID != myID && (peer.isConnected || peer.isReachable) { return acc + 1 }
             return acc
         }
     }
@@ -607,7 +617,7 @@ extension LocationChannelsSheet {
         switch level {
         case .region:
             return ""
-        default:
+        case .building, .block, .neighborhood, .city, .province:
             return "~"
         }
     }

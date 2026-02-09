@@ -24,10 +24,7 @@ struct LocationNotesView: View {
     private var maxDraftLines: Int { dynamicTypeSize.isAccessibilitySize ? 5 : 3 }
 
     private enum Strings {
-        static let closeAccessibility = L10n.string(
-            "common.close",
-            comment: "Accessibility label for close buttons"
-        )
+        static let closeAccessibility = String(localized: "common.close", comment: "Accessibility label for close buttons")
         static let description: LocalizedStringKey = "location_notes.description"
         static let loadingRecent: LocalizedStringKey = "location_notes.loading_recent"
         static let relaysPaused: LocalizedStringKey = "location_notes.relays_paused"
@@ -81,9 +78,6 @@ struct LocationNotesView: View {
             .navigationTitle("")
             #endif
         }
-       #if os(iOS)
-        .presentationDetents([.large])
-        #endif
         .background(backgroundColor)
         .onDisappear { manager.cancel() }
         .onChange(of: geohash) { newValue in
@@ -128,11 +122,7 @@ struct LocationNotesView: View {
                 .font(.bitchatSystem(size: 12, design: .monospaced))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if manager.state == .loading && !manager.initialLoadComplete {
-                Text(Strings.loadingRecent)
-                    .font(.bitchatSystem(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
-            } else if manager.state == .noRelays {
+            if manager.state == .noRelays {
                 Text(Strings.relaysPaused)
                     .font(.bitchatSystem(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
@@ -145,11 +135,11 @@ struct LocationNotesView: View {
     }
 
     private func headerTitle(for count: Int) -> String {
-        let format = NSLocalizedString(
-            "location_notes.header",
-            comment: "Header displaying the geohash and localized note count"
+        String(
+            format: String(localized: "location_notes.header", comment: "Header displaying the geohash and localized note count"),
+            locale: .current,
+            "\(geohash) ± 1", count
         )
-        return NSString.localizedStringWithFormat(format as NSString, geohash, count) as String
     }
 
     private var notesContent: some View {
@@ -179,7 +169,7 @@ struct LocationNotesView: View {
         let ts = timestampText(for: note.createdAt)
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text("@\(baseName)")
+                Text(verbatim: "@\(baseName)")
                     .font(.bitchatSystem(size: 12, weight: .semibold, design: .monospaced))
                 if !ts.isEmpty {
                     Text(ts)

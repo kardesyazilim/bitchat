@@ -10,7 +10,7 @@ import SwiftUI
 
 struct FingerprintView: View {
     @ObservedObject var viewModel: ChatViewModel
-    let peerID: String
+    let peerID: PeerID
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme
     
@@ -32,19 +32,16 @@ struct FingerprintView: View {
         static let notVerifiedBadge: LocalizedStringKey = "fingerprint.badge.not_verified"
         static let verifiedMessage: LocalizedStringKey = "fingerprint.message.verified"
         static func verifyHint(_ nickname: String) -> String {
-            L10n.format(
-                "fingerprint.message.verify_hint",
-                comment: "Instruction to compare fingerprints with a named peer",
+            String(
+                format: String(localized: "fingerprint.message.verify_hint", comment: "Instruction to compare fingerprints with a named peer"),
+                locale: .current,
                 nickname
             )
         }
         static let markVerified: LocalizedStringKey = "fingerprint.action.mark_verified"
         static let removeVerification: LocalizedStringKey = "fingerprint.action.remove_verification"
         static func unknownPeer() -> String {
-            L10n.string(
-                "common.unknown",
-                comment: "Label for an unknown peer"
-            )
+            String(localized: "common.unknown", comment: "Label for an unknown peer")
         }
     }
     
@@ -68,15 +65,12 @@ struct FingerprintView: View {
             
             VStack(alignment: .leading, spacing: 16) {
                 // Prefer short mesh ID for session/encryption status
-                let statusPeerID: String = {
-                    if peerID.count == 64, let short = viewModel.getShortIDForNoiseKey(peerID) { return short }
-                    return peerID
-                }()
+                let statusPeerID = viewModel.getShortIDForNoiseKey(peerID)
                 // Resolve a friendly name
                 let peerNickname: String = {
                     if let p = viewModel.getPeer(byID: statusPeerID) { return p.displayName }
                     if let name = viewModel.meshService.peerNickname(peerID: statusPeerID) { return name }
-                    if peerID.count == 64, let data = Data(hexString: peerID) {
+                    if let data = peerID.noiseKey {
                         if let fav = FavoritesPersistenceService.shared.getFavoriteStatus(for: data), !fav.peerNickname.isEmpty { return fav.peerNickname }
                         let fp = data.sha256Fingerprint()
                         if let social = viewModel.identityManager.getSocialIdentity(for: fp) {
@@ -242,8 +236,6 @@ struct FingerprintView: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(backgroundColor)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
     
     private func formatFingerprint(_ fingerprint: String) -> String {
